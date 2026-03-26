@@ -506,6 +506,14 @@
       if (!box.dragging) updateBoxTransform(box);
     }
 
+    // Depth sort: boxes lower on screen (higher Y) render in front
+    const sorted = [...boxes].sort((a, b) => a.y - b.y);
+    sorted.forEach((box, i) => {
+      if (!box.dragging) {
+        box.el.style.zIndex = i + 1;
+      }
+    });
+
     const maxStack = calculateMaxStack();
     document.getElementById('stats').textContent =
       `Boxes: ${boxes.length} · Settled: ${settledCount} · Max stack: ${maxStack}`;
