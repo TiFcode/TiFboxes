@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>TiFboxes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    background: #1a1a2e;
+    background-image:
+      radial-gradient(circle at 20% 50%, rgba(30,60,90,0.3) 0%, transparent 50%),
+      radial-gradient(circle at 80% 50%, rgba(90,30,60,0.2) 0%, transparent 50%),
+      linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  #canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+  }
+
+  #ground {
+    position: absolute;
+    bottom: 0;
+    left: -200px;
+    right: -200px;
+    height: 6px;
+    background: linear-gradient(180deg, rgba(100,200,255,0.6), rgba(100,200,255,0.1));
+    box-shadow: 0 -2px 20px rgba(100,200,255,0.2);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  #ground-surface {
+    position: absolute;
+    bottom: 0;
+    left: -200px;
+    right: -200px;
+    height: 60px;
+    background: linear-gradient(180deg, rgba(100,200,255,0.05), transparent);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .box {
+    position: absolute;
+    cursor: grab;
+    will-change: transform;
+    border-radius: 6px;
+    transition: box-shadow 0.2s;
+  }
+
+  .box.dragging {
+    cursor: grabbing;
+    z-index: 1000 !important;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.6) !important;
+  }
+
+  .box.settled {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+
+  .hint {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.4);
+    font-size: 13px;
+    pointer-events: none;
+    transition: opacity 2s;
+    text-align: center;
+  }
+  .hint.fade { opacity: 0; }
+
+  #toolbar {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    z-index: 9000;
+  }
+
+  #toolbar button {
+    padding: 10px 18px;
+    border-radius: 25px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.1);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    transition: background 0.2s, transform 0.1s;
+  }
+
+  #toolbar button:active {
+    background: rgba(255,255,255,0.25);
+    transform: scale(0.95);
+  }
+
+  #toolbar button.active {
+    background: rgba(100,200,255,0.3);
+    border-color: rgba(100,200,255,0.5);
+  }
+
+  #stats {
+    position: fixed;
+    top: 75px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.5);
+    font-size: 12px;
+    z-index: 9000;
+    pointer-events: none;
+  }
+
+  #trash-zone {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(255,60,60,0.15);
+    border: 2px dashed rgba(255,60,60,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    z-index: 9000;
+    transition: background 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+
+  #trash-zone.active {
+    background: rgba(255,60,60,0.4);
+    border-color: rgba(255,60,60,0.8);
+    transform: scale(1.2);
+  }
+</style>
+</head>
+<body>
+
+<div id="canvas">
+  <div id="ground-surface"></div>
+  <div id="ground"></div>
+</div>
+
+<div id="toolbar">
+  <button id="add-box" title="Add Box">📦 Add Box</button>
+  <button id="toggle-gravity" title="Toggle Gravity">⬇️ Gravity</button>
+  <button id="clear-all" title="Clear All">🗑️ Clear</button>
+</div>
+
+<div id="stats"></div>
+<div id="trash-zone">🗑️</div>
+<div class="hint" id="hint">Drag boxes to stack them · Gravity pulls them down · Drag to trash to remove</div>
+
+<script>
+(function() {
+  'use strict';
+
+  const canvas = document.getElementById('canvas');
+
+  const COLORS = [
+    { face: '#e74c3c', dark: '#c0392b', light: '#ff6b6b' },
+    { face: '#3498db', dark: '#2980b9', light: '#5dade2' },
+    { face: '#2ecc71', dark: '#27ae60', light: '#58d68d' },
+    { face: '#f39c12', dark: '#e67e22', light: '#f5b041' },
+    { face: '#9b59b6', dark: '#8e44ad', light: '#af7ac5' },
+    { face: '#1abc9c', dark: '#16a085', light: '#48c9b0' },
+    { face: '#e67e22', dark: '#d35400', light: '#eb984e' },
+    { face: '#ec407a', dark: '#c2185b', light: '#f06292' },
+    { face: '#78909c', dark: '#546e7a', light: '#90a4ae' },
+    { face: '#ff7043', dark: '#e64a19', light: '#ff8a65' },
+  ];
+
+  const BOX_SIZES = [
+    { w: 50, h: 50 },
+    { w: 70, h: 50 },
+    { w: 60, h: 60 },
+    { w: 80, h: 60 },
+    { w: 50, h: 70 },
+    { w: 90, h: 50 },
+    { w: 70, h: 70 },
+    { w: 100, h: 60 },
+  ];
+
+  let boxes = [];
+  let boxIdCounter = 0;
+  let zCounter = 1;
+  let gravityOn = true;
+  let animFrame = null;
+
+  // Physics constants
+  const GRAVITY = 0.5;
+  const FRICTION = 0.8;
+  const BOUNCINESS = 0.2;
+  const DAMPING = 0.98;
+
+  function getGroundY() {
+    return window.innerHeight - 6; // ground element height
+  }
+
+  function createBoxEl(w, h, color) {
+    const el = document.createElement('div');
+    el.className = 'box';
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+    el.style.marginLeft = (-w / 2) + 'px';
+    el.style.marginTop = (-h / 2) + 'px';
+    el.style.background = `linear-gradient(135deg, ${color.light} 0%, ${color.face} 40%, ${color.dark} 100%)`;
+    el.style.border = `2px solid ${color.dark}`;
+    el.style.boxShadow = `0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 ${color.light}44, inset 0 -1px 0 ${color.dark}44`;
+    return el;
+  }
+
+  function addBox(x, y, sizeIdx) {
+    if (sizeIdx === undefined) sizeIdx = Math.floor(Math.random() * BOX_SIZES.length);
+    const size = BOX_SIZES[sizeIdx];
+    const color = COLORS[boxIdCounter % COLORS.length];
+    const id = boxIdCounter++;
+
+    const el = createBoxEl(size.w, size.h, color);
+    el.style.zIndex = zCounter++;
+    canvas.appendChild(el);
+
+    const box = {
+      id, el, x, y,
+      w: size.w,
+      h: size.h,
+      vx: 0,
+      vy: 0,
+      rotation: 0,
+      angularVel: 0,
+      color,
+      dragging: false,
+      settled: false,
+      mass: (size.w * size.h) / 1000,
+    };
+
+    el._box = box;
+    boxes.push(box);
+    updateBoxTransform(box);
+    setupBoxDrag(box);
+
+    // Animate entrance
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.3s';
+    requestAnimationFrame(() => {
+      el.style.opacity = '1';
+      setTimeout(() => el.style.transition = '', 300);
+    });
+
+    return box;
+  }
+
+  function updateBoxTransform(box) {
+    box.el.style.transform = `translate(${box.x}px, ${box.y}px) rotate(${box.rotation}deg)`;
+  }
+
+  function removeBox(box) {
+    box.el.remove();
+    boxes = boxes.filter(b => b.id !== box.id);
+  }
+
+  // ── AABB collision (axis-aligned, ignoring rotation for simplicity) ──
+  function getAABB(box) {
+    return {
+      left: box.x - box.w / 2,
+      right: box.x + box.w / 2,
+      top: box.y - box.h / 2,
+      bottom: box.y + box.h / 2,
+    };
+  }
+
+  function aabbOverlap(a, b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  }
+
+  // ── Physics ──
+  function resolveCollision(box, other) {
+    const a = getAABB(box);
+    const b = getAABB(other);
+
+    if (!aabbOverlap(a, b)) return;
+
+    // Calculate overlap on each axis
+    const overlapX = Math.min(a.right - b.left, b.right - a.left);
+    const overlapY = Math.min(a.bottom - b.top, b.bottom - a.top);
+
+    if (overlapX < overlapY) {
+      // Horizontal push
+      if (box.x < other.x) {
+        box.x -= overlapX / 2;
+        other.x += overlapX / 2;
+      } else {
+        box.x += overlapX / 2;
+        other.x -= overlapX / 2;
+      }
+      // Exchange horizontal velocity
+      const avgVx = (box.vx * box.mass + other.vx * other.mass) / (box.mass + other.mass);
+      box.vx = avgVx * BOUNCINESS;
+      other.vx = avgVx * BOUNCINESS;
+    } else {
+      // Vertical push
+      if (box.y < other.y) {
+        // Box is on top
+        box.y -= overlapY / 2;
+        other.y += overlapY / 2;
+      } else {
+        box.y += overlapY / 2;
+        other.y -= overlapY / 2;
+      }
+      // Vertical collision response
+      const avgVy = (box.vy * box.mass + other.vy * other.mass) / (box.mass + other.mass);
+      box.vy = -Math.abs(box.vy) * BOUNCINESS;
+      other.vy = Math.abs(other.vy) * BOUNCINESS;
+
+      // Friction: reduce horizontal velocity when stacked
+      box.vx *= FRICTION;
+      other.vx *= FRICTION;
+    }
+  }
+
+  function physicsStep() {
+    const groundY = getGroundY();
+    const screenW = window.innerWidth;
+
+    for (const box of boxes) {
+      if (box.dragging) continue;
+
+      // Apply gravity
+      if (gravityOn) {
+        box.vy += GRAVITY;
+      }
+
+      // Apply damping
+      box.vx *= DAMPING;
+      box.vy *= DAMPING;
+
+      // Update position
+      box.x += box.vx;
+      box.y += box.vy;
+
+      // Ground collision
+      const halfH = box.h / 2;
+      if (box.y + halfH > groundY) {
+        box.y = groundY - halfH;
+        box.vy = -box.vy * BOUNCINESS;
+        box.vx *= FRICTION;
+
+        // Settle check
+        if (Math.abs(box.vy) < 0.5) {
+          box.vy = 0;
+        }
+      }
+
+      // Wall collision (soft — keep on screen)
+      const halfW = box.w / 2;
+      if (box.x - halfW < 0) {
+        box.x = halfW;
+        box.vx = Math.abs(box.vx) * BOUNCINESS;
+      }
+      if (box.x + halfW > screenW) {
+        box.x = screenW - halfW;
+        box.vx = -Math.abs(box.vx) * BOUNCINESS;
+      }
+    }
+
+    // Box-box collisions (multiple passes for stability)
+    for (let pass = 0; pass < 3; pass++) {
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+          if (boxes[i].dragging || boxes[j].dragging) continue;
+          resolveCollision(boxes[i], boxes[j]);
+        }
+      }
+
+      // Re-enforce ground constraint after collision resolution
+      for (const box of boxes) {
+        if (box.dragging) continue;
+        const halfH = box.h / 2;
+        if (box.y + halfH > groundY) {
+          box.y = groundY - halfH;
+          if (Math.abs(box.vy) < 0.5) box.vy = 0;
+        }
+      }
+    }
+
+    // Check settled state
+    let settledCount = 0;
+    for (const box of boxes) {
+      const wasSettled = box.settled;
+      box.settled = !box.dragging && Math.abs(box.vx) < 0.1 && Math.abs(box.vy) < 0.1;
+      if (box.settled) settledCount++;
+      if (box.settled && !wasSettled) box.el.classList.add('settled');
+      if (!box.settled && wasSettled) box.el.classList.remove('settled');
+    }
+
+    // Update transforms
+    for (const box of boxes) {
+      if (!box.dragging) updateBoxTransform(box);
+    }
+
+    // Stats
+    const maxStack = calculateMaxStack();
+    document.getElementById('stats').textContent =
+      `Boxes: ${boxes.length} · Settled: ${settledCount} · Max stack: ${maxStack}`;
+
+    animFrame = requestAnimationFrame(physicsStep);
+  }
+
+  function calculateMaxStack() {
+    // Simple: count vertical groups by checking which boxes rest on others
+    if (boxes.length === 0) return 0;
+
+    let maxH = 1;
+    // Sort by Y (top to bottom)
+    const sorted = [...boxes].sort((a, b) => b.y - a.y); // bottom first
+
+    for (const box of sorted) {
+      let stackHeight = 1;
+      let current = box;
+
+      // Walk upward: find boxes sitting on top of current
+      for (let step = 0; step < boxes.length; step++) {
+        const above = sorted.find(b => {
+          if (b.id === current.id) return false;
+          const aBox = getAABB(b);
+          const cBox = getAABB(current);
+          // b is above current and horizontally overlapping
+          const hOverlap = aBox.left < cBox.right - 5 && aBox.right > cBox.left + 5;
+          const onTop = Math.abs(aBox.bottom - cBox.top) < 10;
+          return hOverlap && onTop;
+        });
+        if (above) {
+          stackHeight++;
+          current = above;
+        } else {
+          break;
+        }
+      }
+      maxH = Math.max(maxH, stackHeight);
+    }
+
+    return maxH;
+  }
+
+  // ── Drag handling ──
+  function setupBoxDrag(box) {
+    const pointers = new Map();
+    let startState = null;
+    let startMidpoint = null;
+    let lastMid = null;
+    const trashZone = document.getElementById('trash-zone');
+
+    function getMid() {
+      let sx = 0, sy = 0;
+      pointers.forEach(p => { sx += p.x; sy += p.y; });
+      return { x: sx / pointers.size, y: sy / pointers.size };
+    }
+
+    box.el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      box.el.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      box.dragging = true;
+      box.vx = 0;
+      box.vy = 0;
+      box.el.classList.add('dragging');
+      box.el.classList.remove('settled');
+      box.el.style.zIndex = zCounter++;
+
+      startState = { x: box.x, y: box.y };
+      startMidpoint = getMid();
+      lastMid = getMid();
+    });
+
+    box.el.addEventListener('pointermove', (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      e.preventDefault();
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      const mid = getMid();
+
+      box.x = startState.x + (mid.x - startMidpoint.x);
+      box.y = startState.y + (mid.y - startMidpoint.y);
+
+      // Track velocity for throw
+      box.vx = (mid.x - lastMid.x) * 0.5;
+      box.vy = (mid.y - lastMid.y) * 0.5;
+      lastMid = { ...mid };
+
+      updateBoxTransform(box);
+
+      // Trash zone check
+      const trashRect = trashZone.getBoundingClientRect();
+      const trashCX = trashRect.left + trashRect.width / 2;
+      const trashCY = trashRect.top + trashRect.height / 2;
+      const distToTrash = Math.sqrt((mid.x - trashCX) ** 2 + (mid.y - trashCY) ** 2);
+      trashZone.classList.toggle('active', distToTrash < 60);
+    });
+
+    function onUp(e) {
+      pointers.delete(e.pointerId);
+
+      if (pointers.size === 0) {
+        box.dragging = false;
+        box.el.classList.remove('dragging');
+        trashZone.classList.remove('active');
+
+        // Check trash
+        const trashRect = trashZone.getBoundingClientRect();
+        const trashCX = trashRect.left + trashRect.width / 2;
+        const trashCY = trashRect.top + trashRect.height / 2;
+        const distToTrash = Math.sqrt((e.clientX - trashCX) ** 2 + (e.clientY - trashCY) ** 2);
+
+        if (distToTrash < 60) {
+          removeBox(box);
+          return;
+        }
+      } else {
+        startState = { x: box.x, y: box.y };
+        startMidpoint = getMid();
+      }
+    }
+
+    box.el.addEventListener('pointerup', onUp);
+    box.el.addEventListener('pointercancel', onUp);
+  }
+
+  // ── Toolbar ──
+  document.getElementById('add-box').addEventListener('click', () => {
+    const w = window.innerWidth;
+    const x = w * 0.2 + Math.random() * w * 0.6;
+    const y = 80 + Math.random() * 100; // drop from top area
+    addBox(x, y);
+  });
+
+  document.getElementById('toggle-gravity').addEventListener('click', () => {
+    const btn = document.getElementById('toggle-gravity');
+    gravityOn = !gravityOn;
+    btn.textContent = gravityOn ? '⬇️ Gravity' : '🚫 No Gravity';
+    btn.classList.toggle('active', !gravityOn);
+
+    if (!gravityOn) {
+      // Stop all movement when gravity disabled
+      boxes.forEach(b => { b.vx = 0; b.vy = 0; });
+    }
+  });
+
+  document.getElementById('clear-all').addEventListener('click', () => {
+    boxes.forEach(b => b.el.remove());
+    boxes = [];
+  });
+
+  // ── Background pan ──
+  let panStartX, panStartY, canvasOffX = 0, canvasOffY = 0, isPanning = false;
+
+  document.body.addEventListener('pointerdown', (e) => {
+    if (e.target !== document.body && e.target !== canvas &&
+        e.target.id !== 'ground' && e.target.id !== 'ground-surface') return;
+    e.preventDefault();
+    document.body.setPointerCapture(e.pointerId);
+    isPanning = true;
+    panStartX = e.clientX - canvasOffX;
+    panStartY = e.clientY - canvasOffY;
+  });
+
+  document.body.addEventListener('pointermove', (e) => {
+    if (!isPanning) return;
+    canvasOffX = e.clientX - panStartX;
+    canvasOffY = e.clientY - panStartY;
+    canvas.style.transform = `translate(${canvasOffX}px, ${canvasOffY}px)`;
+  });
+
+  document.body.addEventListener('pointerup', () => { isPanning = false; });
+  document.body.addEventListener('pointercancel', () => { isPanning = false; });
+
+  // ── Init ──
+  const w = window.innerWidth;
+  addBox(w * 0.35, 200, 2);
+  addBox(w * 0.50, 150, 0);
+  addBox(w * 0.65, 180, 4);
+
+  // Start physics
+  physicsStep();
+
+  // Fade hint
+  setTimeout(() => {
+    document.getElementById('hint')?.classList.add('fade');
+  }, 5000);
+
+})();
+</script>
+</body>
+</html>
