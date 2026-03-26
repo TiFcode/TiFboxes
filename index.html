@@ -506,8 +506,8 @@
       if (!box.dragging) updateBoxTransform(box);
     }
 
-    // Depth sort: boxes lower on screen (higher Y) render in front
-    const sorted = [...boxes].sort((a, b) => a.y - b.y);
+    // Depth sort: boxes higher up (lower Y) render in front (on top of stack)
+    const sorted = [...boxes].sort((a, b) => b.y - a.y);
     sorted.forEach((box, i) => {
       if (!box.dragging) {
         box.el.style.zIndex = i + 1;
